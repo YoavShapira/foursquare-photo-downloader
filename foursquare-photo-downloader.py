@@ -1,4 +1,4 @@
-from flask import Flask, redirect
+from flask import Flask, redirect, request
 import foursquare
 
 app = Flask(__name__)
@@ -17,7 +17,8 @@ def hello():
 
 @app.route("/auth")
 def auth():
-    return "Authorizing"
+    code = request.args.get('code', 'N/A')
+    return "Authorized, code = %s" % code
 
 if __name__ == "__main__":
     app.debug = True
