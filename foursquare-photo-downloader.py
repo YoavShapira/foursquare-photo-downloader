@@ -15,6 +15,12 @@ app = Flask(__name__)
 # Default = /tmp, but should make configurable
 dest_dir = '/tmp/'
 
+# Limit (upper bound) on total photos to process
+max_photos = 1000
+
+# How many photos per batch. Foursquare API limit is 200.
+photos_per_call = 100
+
 
 @app.route("/")
 def hello():
@@ -52,11 +58,6 @@ def auth():
     # Apply the returned access token to the client
     client.set_access_token(access_token)
 
-    return process_photos(client)
-
-def process_photos(client):
-    """ Finds and downloads the Foursquare photos. Returns something to display to user. """
-
     # Get the user's data
     user = client.users()
     if not user:
@@ -65,11 +66,32 @@ def process_photos(client):
     app.logger.debug("Got authenticated user from Foursquare = %s", json.dumps(user, sort_keys=True, indent=4 * ' '))
     app.logger.debug("User first name = %s", user['user']['firstName'])
 
-    # Get the user's photos
-    photos = client.users.photos()
+    result = get_photos(client)
+    return "Processed %d photos for %s %s" % (result, user['user']['firstName'], user['user']['lastName'])
+
+def get_photos(client):
+    # Get the user's photos, one batch at a time, until done
+    offset = 0
+    total_photos_processed = 0
+    while (offset < max_photos):
+        app.logger.info("Getting next batch of %d (max) photos at offset = %d" % (photos_per_call, offset))
+        photos = client.users.photos(params={'limit': photos_per_call, 'offset': offset})
+        batch_photos_processed = process_photos(photos)
+        if (batch_photos_processed < 1):
+            app.logger.error("Error processing photos.")
+            return total_photos_processed
+
+        # Otherwise, increment offset for next call
+        offset += batch_photos_processed + 1
+
+    return total_photos_processed
+
+def process_photos(photos):
+    """ Processes the given photos. Finds and downloads the Foursquare photos. Returns something to display to user. """
+
     if not photos:
         app.logger.error("Could not get user's photos from Foursquare.")
-        return "Sorry, an error occurred."
+        return 0
     app.logger.debug("Photos JSON = %s" % json.dumps(photos, sort_keys=True, indent=4 * ' '))
 
     photos_dict = photos['photos']
@@ -78,20 +100,20 @@ def process_photos(client):
     photo_count = photos_dict['count']
     if not photo_count:
         app.logger.error("No photo count from Foursquare?")
-        return "Sorry, an error occurred."
+        return 0
     if photo_count < 1:
         app.logger.warning("No photos found for this user.")
-        return "No photos available."
-    app.logger.info("Need to process %d photos" % photo_count)
-
+        return 0
+    app.logger.debug("Need to process %d photos total, %d this batch." % (photo_count, photos_per_call))
+ 
     photos_collection = photos_dict['items']
-    done = 0
+    photos_processed = 0
     for photo in photos_collection:
         process_photo(photo)
-        done += 1
-        app.logger.info("Done %d out of %d photos." % (done, photo_count))
+        photos_processed += 1
+        app.logger.info("Done %d out of %d photos." % (photos_processed, photos_per_call))
  
-    return "Done, got %d photos for %s %s." % (photo_count, user['user']['firstName'], user['user']['lastName'])
+    return photos_processed
 
 def process_photo(photo):
     """ Processes the given photo. """
